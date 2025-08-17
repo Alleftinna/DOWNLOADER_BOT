@@ -1,0 +1,18 @@
+{
+    "instagram": [
+        "mid=uevTdmbcwATKJEPOuxpSV6SG; ig_did=4c2b21a7ebb487ba22be32ab7bc26e04; csrftoken=ij7e1xlVMoAvqebFxkAQ0AZivJpz3Apq; ds_user_id=816936668; sessionid=81svzxPrRZmEz5A5BBv4BSgNrmcDxbqO"
+    ],
+    "instagram_bearer": [
+        "token=rimcbZtYceI2NSfjfVcsn2R7jkvK59V3Nyk1dgUh",
+        "token=IGT:2:eNkT54HYx60RAOKuAqFDQdDBPmHUsU3N"
+    ],
+    "reddit": [
+        "client_id=KOSdml4Rgr8kuaztGdqOvo; client_secret=BoWJGnVCiImwFjUswxb33BScc55; refresh_token=Bp0KwxraNjNYCujrwOj3bNbDCVf78fLfiTODm65I7TT"
+    ],
+    "twitter": [
+        "auth_token=W1RECpFxTzBsF2IjmPMjNF68HVWEXd34; ct0=hkbZlT0GUWpBQJl3CkSXq0XCf0D3K5pA"
+    ],
+    "youtube": [
+        "cookie=SmH4cqnqVuwqJYvIm3OKusca9nOdEWcvrTuC2OLC; b=AW2hm9lLEJfPjowfGCAF"
+    ]
+}

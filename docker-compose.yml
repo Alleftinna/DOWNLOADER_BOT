@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  cobalt-bot:
+    build: .
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    networks:
+      - cobalt-network
+
+
+
+networks:
+  cobalt-network:
+    external: true
