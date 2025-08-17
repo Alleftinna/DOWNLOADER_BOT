@@ -30,6 +30,9 @@ COPY . .
 # Create data directory
 RUN mkdir -p data
 
+# Create cobalt directory for cookies
+RUN mkdir -p /root/cobalt
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 

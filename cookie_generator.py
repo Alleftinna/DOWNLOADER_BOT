@@ -98,6 +98,9 @@ class CookieGenerator:
     def save_cookies(self, cookies):
         """Сохраняет куки в файл"""
         try:
+            # Создаем директорию, если она не существует
+            os.makedirs(os.path.dirname(self.cookies_file), exist_ok=True)
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Создаем директорию {os.path.dirname(self.cookies_file)}")
             with open(self.cookies_file, 'w', encoding='utf-8') as f:
                 json.dump(cookies, f, indent=4, ensure_ascii=False)
             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Куки обновлены и сохранены в {self.cookies_file}")

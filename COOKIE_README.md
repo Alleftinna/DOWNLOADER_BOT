@@ -106,3 +106,41 @@ generator = CookieGenerator(cookies_file="my_cookies.json")
 ## Интеграция с основным ботом
 
 Генератор куков автоматически интегрирован в `main.py` и запускается при старте бота. Куки будут доступны в файле `cookies.json` для использования в других частях приложения.
+
+## Настройка для Docker
+
+### 1. Создание локальной директории
+
+Перед запуском Docker контейнера создайте локальную директорию:
+
+```bash
+# Сделать скрипт исполняемым
+chmod +x setup_cobalt_dir.sh
+
+# Запустить скрипт создания директории
+sudo ./setup_cobalt_dir.sh
+```
+
+### 2. Volume Mapping
+
+В `docker-compose.yml` настроен volume mapping:
+```yaml
+volumes:
+  - ./data:/app/data
+  - /root/cobalt:/root/cobalt
+```
+
+Это означает, что директория `/root/cobalt` в контейнере будет синхронизирована с локальной директорией `/root/cobalt` на хосте.
+
+### 3. Запуск
+
+```bash
+# Пересобрать и запустить контейнер
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+```
+
+### 4. Проверка
+
+Куки будут сохраняться в локальной директории `/root/cobalt/cookies.json` и автоматически обновляться каждые 12 часов.
