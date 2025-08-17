@@ -7,7 +7,7 @@ import string
 from datetime import datetime
 
 # Глобальный путь для сохранения куков
-COOKIES_SAVE_PATH = "root/cobalt/cookies.json"
+COOKIES_SAVE_PATH = "/root/cobalt/cookies.json"
 
 def get_cookies_save_path():
     """Возвращает текущий глобальный путь для сохранения куков"""
