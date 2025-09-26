@@ -4,16 +4,16 @@ import asyncio
 import aiohttp
 import aiofiles
 import math
-import tempfile
+ 
 import shutil
 import subprocess
 import re
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, FSInputFile
+from aiogram.types import Message, FSInputFile, InlineQuery, InlineQueryResultArticle, InlineQueryResultVideo, InputTextMessageContent
 from aiogram.filters import Command
-from aiogram.enums import ParseMode
+ 
 from dotenv import load_dotenv, find_dotenv
-import json
+ 
 import uuid
 from pathlib import Path
 from cookie_generator import CookieGenerator
@@ -152,7 +152,7 @@ async def split_video_with_ffmpeg(video_path, video_dir):
         # Минимальная длительность сегмента - 30 секунд
         if segment_duration < 30:
             segment_duration = 30
-            logging.info(f"Segment duration too small, using minimum 30 seconds")
+            logging.info("Segment duration too small, using minimum 30 seconds")
         
         logging.info(f"Video will be split into approximately {num_parts} parts")
         logging.info(f"Using segment duration: {segment_duration} seconds")
@@ -278,6 +278,50 @@ async def download_video(url):
         cleanup_temp_dir(video_dir)
         return None, None, None
 
+# Helper: fetch direct video URL and thumbnail from Cobalt without downloading
+async def get_cobalt_video_info(url):
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    if COBALT_API_KEY:
+        headers["Authorization"] = f"Api-Key {COBALT_API_KEY}"
+
+    payload = {
+        "url": url,
+        "videoQuality": VIDEO_QUALITY,
+        "audioFormat": "mp3",
+        "filenameStyle": "basic",
+        "alwaysProxy": True
+    }
+
+    try:
+        logging.info(f"Requesting direct URL from cobalt-api at {COBALT_API_URL}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(COBALT_API_URL, json=payload, headers=headers) as response:
+                result = await response.json()
+
+                if result.get("status") == "error":
+                    error_details = result.get("error", {})
+                    logging.error(f"Cobalt error: {error_details}")
+                    return None, None, None
+
+                if result.get("status") in ["tunnel", "redirect"]:
+                    direct_url = result.get("url")
+                    filename = result.get("filename") or "video.mp4"
+                    # Try to get thumbnail if provided by API; otherwise None
+                    thumbnail = result.get("thumbnail") or result.get("thumb") or None
+                    # Ensure .mp4 extension for Telegram inline video
+                    if not filename.lower().endswith('.mp4'):
+                        filename = f"{filename.rsplit('.', 1)[0] if '.' in filename else filename}.mp4"
+                    return direct_url, thumbnail, filename
+
+                logging.error(f"Unexpected cobalt status for inline: {result.get('status')}")
+                return None, None, None
+    except Exception as e:
+        logging.error(f"Error getting cobalt direct url: {e}")
+        return None, None, None
+
 # Command handler for /start and /help commands
 @dp.message(Command("start", "help"))
 async def send_welcome(message: Message):
@@ -286,6 +330,43 @@ async def send_welcome(message: Message):
         text=MESSAGES["welcome"],
         message_thread_id=message.message_thread_id
     )
+
+# Inline mode handler: accepts a video link and returns the video without caption
+@dp.inline_query()
+async def inline_video_handler(query: InlineQuery):
+    text = (query.query or "").strip()
+
+    # If empty query, return no results (or could provide tips)
+    if not text:
+        await query.answer([], is_personal=True, cache_time=1)
+        return
+
+    # Extract URL and validate supported domains
+    url = extract_url_from_text(text) or text
+    if not any(domain in url.lower() for domain in SUPPORTED_DOMAINS):
+        await query.answer([], is_personal=True, cache_time=1)
+        return
+
+    video_url, thumb_url, filename = await get_cobalt_video_info(url)
+
+    if video_url:
+        result = InlineQueryResultVideo(
+            id=str(uuid.uuid4()),
+            video_url=video_url,
+            mime_type="video/mp4",
+            thumbnail_url=thumb_url or "https://via.placeholder.com/320x180?text=Video",
+            title="Видео"
+            # No caption to satisfy "без описания"
+        )
+        await query.answer([result], is_personal=True, cache_time=1)
+    else:
+        error_result = InlineQueryResultArticle(
+            id=str(uuid.uuid4()),
+            title="Ошибка",
+            description="Не удалось скачать видео",
+            input_message_content=InputTextMessageContent(message_text=MESSAGES["error_download"]) 
+        )
+        await query.answer([error_result], is_personal=True, cache_time=1)
 
 # Функция для извлечения URL из текста
 def extract_url_from_text(text):
