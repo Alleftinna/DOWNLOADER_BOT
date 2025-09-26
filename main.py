@@ -8,6 +8,7 @@ import math
 import shutil
 import subprocess
 import re
+import urllib.parse
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, FSInputFile, InlineQuery, InlineQueryResultArticle, InlineQueryResultVideo, InputTextMessageContent
 from aiogram.filters import Command
@@ -349,12 +350,33 @@ async def inline_video_handler(query: InlineQuery):
 
     video_url, thumb_url, filename = await get_cobalt_video_info(url)
 
+    def sanitize_http_url(raw_url: str) -> str | None:
+        if not raw_url or not isinstance(raw_url, str):
+            return None
+        raw_url = raw_url.strip()
+        if not raw_url.lower().startswith(("http://", "https://")):
+            return None
+        try:
+            parts = urllib.parse.urlsplit(raw_url)
+            safe_path = urllib.parse.quote(parts.path, safe="/-._~")
+            safe_query = urllib.parse.quote_plus(parts.query, safe="=&:%/_-.~")
+            safe_fragment = urllib.parse.quote(parts.fragment, safe="-._~")
+            return urllib.parse.urlunsplit((parts.scheme, parts.netloc, safe_path, safe_query, safe_fragment))
+        except Exception:
+            return None
+
+    video_url = sanitize_http_url(video_url)
+    # Ensure thumbnail is a JPEG and valid URL (Telegram requires jpg for thumbs)
+    thumb_url = sanitize_http_url(thumb_url) if thumb_url else None
+    if not thumb_url:
+        thumb_url = "https://via.placeholder.com/320x180.jpg?text=Video"
+
     if video_url:
         result = InlineQueryResultVideo(
             id=str(uuid.uuid4()),
             video_url=video_url,
             mime_type="video/mp4",
-            thumbnail_url=thumb_url or "https://via.placeholder.com/320x180?text=Video",
+            thumbnail_url=thumb_url,
             title="Видео"
             # No caption to satisfy "без описания"
         )
