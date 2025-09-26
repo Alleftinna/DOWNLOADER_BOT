@@ -11,6 +11,7 @@ import re
 import urllib.parse
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, FSInputFile, InlineQuery, InlineQueryResultArticle, InlineQueryResultVideo, InputTextMessageContent
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
  
 from dotenv import load_dotenv, find_dotenv
@@ -357,8 +358,10 @@ async def inline_video_handler(query: InlineQuery):
         if not raw_url.lower().startswith(("http://", "https://")):
             return None
         try:
+            # Fix common HTML-encoded ampersands
+            raw_url = raw_url.replace("&amp;", "&")
             parts = urllib.parse.urlsplit(raw_url)
-            scheme = parts.scheme if parts.scheme in ("http", "https") else "https"
+            scheme = "https" if parts.scheme not in ("http", "https") or parts.scheme == "http" else parts.scheme
             # IDNA-encode domain
             try:
                 netloc = parts.netloc.encode("idna").decode("ascii")
@@ -383,18 +386,43 @@ async def inline_video_handler(query: InlineQuery):
     # Ensure thumbnail is a JPEG and valid URL (Telegram requires jpg for thumbs)
     thumb_url = sanitize_http_url(thumb_url) if thumb_url else None
     if not thumb_url or not thumb_url.lower().endswith((".jpg", ".jpeg")):
-        thumb_url = "https://via.placeholder.com/320x180.jpg?text=Video"
+        # Use a stable static JPEG without query parameters
+        thumb_url = "https://telegra.ph/file/6c0a7e38485639b61436a.jpg"
 
     if video_url:
+        logging.info(f"Inline preparing video_url={video_url}")
+        # Create first-frame thumbnail locally and upload to telegra.ph for a stable JPEG remote URL
+        temp_dir = os.path.join("data", f"inline_{uuid.uuid4().hex}")
+        local_thumb = await create_first_frame_thumbnail_from_remote(video_url, temp_dir)
+        if local_thumb:
+            uploaded_thumb = await upload_image_to_telegra_ph(local_thumb)
+            # Cleanup local temp dir
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
+            if uploaded_thumb:
+                thumb_url = uploaded_thumb
+        logging.info(f"Inline sending thumb_url={thumb_url}")
+
         result = InlineQueryResultVideo(
             id=str(uuid.uuid4()),
             video_url=video_url,
             mime_type="video/mp4",
             thumbnail_url=thumb_url,
-            title="Video"
-            # No caption to satisfy "без описания"
+            title="Video",
         )
-        await query.answer([result], is_personal=True, cache_time=1)
+        try:
+            await query.answer([result], is_personal=True, cache_time=1)
+        except TelegramBadRequest as e:
+            logging.error(f"Inline answer failed: {e}")
+            error_result = InlineQueryResultArticle(
+                id=str(uuid.uuid4()),
+                title="Error",
+                description="Не удалось скачать видео",
+                input_message_content=InputTextMessageContent(message_text=MESSAGES["error_download"]) 
+            )
+            await query.answer([error_result], is_personal=True, cache_time=1)
     else:
         error_result = InlineQueryResultArticle(
             id=str(uuid.uuid4()),
@@ -651,6 +679,71 @@ async def create_thumbnail(video_path, video_dir, unique_suffix=None):
             return None
     except Exception as e:
         logging.error(f"Error in create_thumbnail: {e}")
+        return None
+
+# Создать превью из первого кадра удаленного видео (по URL) с помощью ffmpeg
+async def create_first_frame_thumbnail_from_remote(video_url: str, temp_dir: str):
+    try:
+        os.makedirs(temp_dir, exist_ok=True)
+        thumbnail_path = os.path.join(temp_dir, "inline_thumbnail.jpg")
+
+        cmd = [
+            "ffmpeg",
+            "-y",                # overwrite output
+            "-i", video_url,     # input is remote URL
+            "-frames:v", "1",   # only first frame
+            "-q:v", "2",        # high quality
+            "-f", "image2",
+            thumbnail_path
+        ]
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout, stderr = process.communicate()
+
+        if process.returncode != 0:
+            logging.error(f"Error creating inline thumbnail: {stderr.decode()}")
+            return None
+
+        if os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
+            logging.info(f"Created inline thumbnail: {thumbnail_path}")
+            return thumbnail_path
+        else:
+            logging.error("Inline thumbnail file is empty or not created")
+            return None
+    except Exception as e:
+        logging.error(f"Error in create_first_frame_thumbnail_from_remote: {e}")
+        return None
+
+# Загрузить локальный JPEG на telegra.ph и вернуть публичный URL
+async def upload_image_to_telegra_ph(file_path: str):
+    try:
+        form = aiohttp.FormData()
+        async with aiofiles.open(file_path, 'rb') as f:
+            content = await f.read()
+        form.add_field(
+            name="file",
+            value=content,
+            filename=os.path.basename(file_path),
+            content_type="image/jpeg"
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post("https://telegra.ph/upload", data=form) as resp:
+                if resp.status != 200:
+                    logging.error(f"Telegraph upload failed: HTTP {resp.status}")
+                    return None
+                payload = await resp.json()
+                if isinstance(payload, list) and payload and isinstance(payload[0], dict) and payload[0].get("src"):
+                    url = "https://telegra.ph" + payload[0]["src"]
+                    logging.info(f"Uploaded thumbnail to telegra.ph: {url}")
+                    return url
+                logging.error(f"Unexpected telegraph response: {payload}")
+                return None
+    except Exception as e:
+        logging.error(f"Error uploading to telegra.ph: {e}")
         return None
 
 async def main():
