@@ -353,22 +353,36 @@ async def inline_video_handler(query: InlineQuery):
     def sanitize_http_url(raw_url: str) -> str | None:
         if not raw_url or not isinstance(raw_url, str):
             return None
-        raw_url = raw_url.strip()
+        raw_url = raw_url.strip().splitlines()[0]
         if not raw_url.lower().startswith(("http://", "https://")):
             return None
         try:
             parts = urllib.parse.urlsplit(raw_url)
-            safe_path = urllib.parse.quote(parts.path, safe="/-._~")
-            safe_query = urllib.parse.quote_plus(parts.query, safe="=&:%/_-.~")
-            safe_fragment = urllib.parse.quote(parts.fragment, safe="-._~")
-            return urllib.parse.urlunsplit((parts.scheme, parts.netloc, safe_path, safe_query, safe_fragment))
+            scheme = parts.scheme if parts.scheme in ("http", "https") else "https"
+            # IDNA-encode domain
+            try:
+                netloc = parts.netloc.encode("idna").decode("ascii")
+            except Exception:
+                netloc = parts.netloc
+            # Quote path strictly
+            safe_path = urllib.parse.quote(parts.path, safe="/:@-._~!$&'()*+,;=")
+            # Rebuild query by quoting keys/values
+            query_pairs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+            quoted_pairs = []
+            for k, v in query_pairs:
+                kq = urllib.parse.quote(k, safe="-._~")
+                vq = urllib.parse.quote(v, safe="-._~/:@!$&'()*+,;=")
+                quoted_pairs.append(f"{kq}={vq}")
+            safe_query = "&".join(quoted_pairs)
+            # Drop fragment entirely
+            return urllib.parse.urlunsplit((scheme, netloc, safe_path, safe_query, ""))
         except Exception:
             return None
 
     video_url = sanitize_http_url(video_url)
     # Ensure thumbnail is a JPEG and valid URL (Telegram requires jpg for thumbs)
     thumb_url = sanitize_http_url(thumb_url) if thumb_url else None
-    if not thumb_url:
+    if not thumb_url or not thumb_url.lower().endswith((".jpg", ".jpeg")):
         thumb_url = "https://via.placeholder.com/320x180.jpg?text=Video"
 
     if video_url:
@@ -377,7 +391,7 @@ async def inline_video_handler(query: InlineQuery):
             video_url=video_url,
             mime_type="video/mp4",
             thumbnail_url=thumb_url,
-            title="Видео"
+            title="Video"
             # No caption to satisfy "без описания"
         )
         await query.answer([result], is_personal=True, cache_time=1)
