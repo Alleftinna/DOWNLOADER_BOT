@@ -1,17 +1,16 @@
 import os
 import logging
 import asyncio
+import time
 import aiohttp
 import aiofiles
 import math
- 
+
 import shutil
 import subprocess
 import re
-import urllib.parse
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, FSInputFile, InlineQuery, InlineQueryResultArticle, InlineQueryResultVideo, InputTextMessageContent
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import Message, FSInputFile
 from aiogram.filters import Command
  
 from dotenv import load_dotenv, find_dotenv
@@ -31,9 +30,9 @@ Path("data").mkdir(exist_ok=True)
 
 # Telegram bot configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-# URL для cobalt-api в Docker-сети: имя контейнера вместо IP
-COBALT_API_URL = os.getenv("COBALT_API_URL", "http://cobalt-api:9000")
-COBALT_API_KEY = os.getenv("COBALT_API_KEY", "")
+DOWNLOADER_API_URL = os.getenv("DOWNLOADER_API_URL", "http://downloader:8899").rstrip("/")
+DOWNLOAD_POLL_INTERVAL = float(os.getenv("DOWNLOAD_POLL_INTERVAL", "1.5"))
+DOWNLOAD_MAX_WAIT = float(os.getenv("DOWNLOAD_MAX_WAIT", "330"))
 
 # File size constants (in bytes)
 MAX_SINGLE_FILE_SIZE = 45 * 1024 * 1024  # 45 MB 
@@ -205,126 +204,140 @@ async def split_video_with_ffmpeg(video_path, video_dir):
         logging.error(f"Error in split_video_with_ffmpeg: {e}")
         return [], 0
 
-# Function to download video using Cobalt service
-async def download_video(url):
-    # Создаем уникальную директорию для этого видео
+def _target_video_height() -> int:
+    raw = str(VIDEO_QUALITY).strip().lower().rstrip("p")
+    try:
+        return int(raw)
+    except ValueError:
+        return 480
+
+
+def _pick_format_id(formats: list[dict], target_height: int) -> str | None:
+    with_height = [f for f in formats if f.get("height") is not None]
+    if not with_height:
+        return None
+    at_or_below = [f for f in with_height if int(f["height"]) <= target_height]
+    if at_or_below:
+        best = max(at_or_below, key=lambda x: int(x["height"]))
+        return str(best["id"])
+    lowest = min(with_height, key=lambda x: int(x["height"]))
+    return str(lowest["id"])
+
+
+def _safe_filename(name: str, fallback: str) -> str:
+    base = os.path.basename((name or "").strip() or fallback)
+    if not base or base in (".", ".."):
+        return fallback
+    return base
+
+
+async def download_video(url: str):
     video_dir = create_video_temp_dir()
-    
+    base = DOWNLOADER_API_URL
     headers = {
         "Accept": "application/json",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
-    
-    # Add authorization header if API key is provided
-    if COBALT_API_KEY:
-        headers["Authorization"] = f"Api-Key {COBALT_API_KEY}"
-    
-    payload = {
-        "url": url,
-        "videoQuality": VIDEO_QUALITY,
-        "audioFormat": "mp3",
-        "filenameStyle": "basic",
-        "alwaysProxy": True  # Always use proxy to bypass restrictions
-    }
-    
+    timeout_short = aiohttp.ClientTimeout(total=90)
+    timeout_dl = aiohttp.ClientTimeout(total=600)
+
     try:
-        logging.info(f"Sending request to cobalt-api at {COBALT_API_URL}")
+        logging.info(f"Requesting video via downloader at {base}")
         async with aiohttp.ClientSession() as session:
-            async with session.post(COBALT_API_URL, json=payload, headers=headers) as response:
-                result = await response.json()
-                
-                if result.get("status") == "error":
-                    error_details = result.get("error", {})
-                    error_code = error_details.get("code", "unknown")
-                    error_message = error_details.get("message", "Unknown error")
-                    logging.error(f"Error downloading video: Code={error_code}, Message={error_message}")
+            format_id: str | None = None
+            title = ""
+            try:
+                async with session.post(
+                    f"{base}/api/info",
+                    json={"url": url},
+                    headers=headers,
+                    timeout=timeout_short,
+                ) as info_resp:
+                    if info_resp.status == 200:
+                        info = await info_resp.json()
+                        title = (info.get("title") or "").strip()
+                        format_id = _pick_format_id(info.get("formats") or [], _target_video_height())
+                    else:
+                        body = await info_resp.text()
+                        logging.warning("Downloader /api/info HTTP %s: %s", info_resp.status, body[:500])
+            except Exception as e:
+                logging.warning("Downloader /api/info failed: %s", e)
+
+            payload: dict = {"url": url, "format": "video", "title": title}
+            if format_id:
+                payload["format_id"] = format_id
+
+            async with session.post(
+                f"{base}/api/download",
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as dresp:
+                ddata = await dresp.json(content_type=None)
+                if dresp.status != 200:
+                    logging.error("Downloader /api/download error: %s", ddata)
                     cleanup_temp_dir(video_dir)
                     return None, None, None
-                
-                if result.get("status") in ["tunnel", "redirect"]:
-                    download_url = result.get("url")
-                    filename = result.get("filename")
-                    
-                    # Ensure mp4 extension for the main file
-                    if not filename.lower().endswith('.mp4'):
-                        filename = f"{filename.rsplit('.', 1)[0] if '.' in filename else filename}.mp4"
-                        
-                    local_path = os.path.join(video_dir, filename)
-                    
-                    # Download the file
-                    logging.info(f"Downloading video from {download_url}")
-                    async with session.get(download_url) as file_response:
-                        if file_response.status == 200:
-                            async with aiofiles.open(local_path, 'wb') as f:
-                                await f.write(await file_response.read())
-                            
-                            # Проверяем, что файл не пустой
-                            file_size = os.path.getsize(local_path)
-                            if file_size > 0:
-                                logging.info(f"Downloaded file size: {bytes_to_mb(file_size):.2f}MB")
-                                return local_path, filename, video_dir
-                            else:
-                                logging.error("Downloaded file is empty")
-                                cleanup_temp_dir(video_dir)
-                                return None, None, None
-                        else:
-                            logging.error(f"Error downloading file: HTTP {file_response.status}")
-                            cleanup_temp_dir(video_dir)
-                            return None, None, None
-                
-                logging.error(f"Unexpected response status: {result.get('status')}")
+                job_id = ddata.get("job_id")
+                if not job_id:
+                    logging.error("Downloader /api/download missing job_id: %s", ddata)
+                    cleanup_temp_dir(video_dir)
+                    return None, None, None
+
+            deadline = time.monotonic() + DOWNLOAD_MAX_WAIT
+            filename = "video.mp4"
+            while time.monotonic() < deadline:
+                await asyncio.sleep(DOWNLOAD_POLL_INTERVAL)
+                async with session.get(
+                    f"{base}/api/status/{job_id}",
+                    timeout=timeout_short,
+                ) as sresp:
+                    if sresp.status == 404:
+                        logging.error("Downloader job not found: %s", job_id)
+                        cleanup_temp_dir(video_dir)
+                        return None, None, None
+                    st = await sresp.json(content_type=None)
+                status = st.get("status")
+                if status == "done":
+                    filename = _safe_filename(st.get("filename") or "", "video.mp4")
+                    break
+                if status == "error":
+                    logging.error("Downloader job error: %s", st.get("error"))
+                    cleanup_temp_dir(video_dir)
+                    return None, None, None
+
+            else:
+                logging.error("Downloader job timed out after %s s", DOWNLOAD_MAX_WAIT)
                 cleanup_temp_dir(video_dir)
                 return None, None, None
+
+            local_path = os.path.join(video_dir, filename)
+            async with session.get(
+                f"{base}/api/file/{job_id}",
+                timeout=timeout_dl,
+            ) as fresp:
+                if fresp.status != 200:
+                    logging.error("Downloader /api/file HTTP %s", fresp.status)
+                    cleanup_temp_dir(video_dir)
+                    return None, None, None
+                async with aiofiles.open(local_path, "wb") as out_f:
+                    async for chunk in fresp.content.iter_chunked(256 * 1024):
+                        await out_f.write(chunk)
+
+            file_size = os.path.getsize(local_path)
+            if file_size <= 0:
+                logging.error("Downloaded file is empty")
+                cleanup_temp_dir(video_dir)
+                return None, None, None
+            logging.info("Downloaded file size: %.2f MB", bytes_to_mb(file_size))
+            return local_path, filename, video_dir
+
     except Exception as e:
-        logging.error(f"Error during download: {e}")
+        logging.error("Error during download: %s", e)
         cleanup_temp_dir(video_dir)
         return None, None, None
 
-# Helper: fetch direct video URL and thumbnail from Cobalt without downloading
-async def get_cobalt_video_info(url):
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-    }
-    if COBALT_API_KEY:
-        headers["Authorization"] = f"Api-Key {COBALT_API_KEY}"
 
-    payload = {
-        "url": url,
-        "videoQuality": VIDEO_QUALITY,
-        "audioFormat": "mp3",
-        "filenameStyle": "basic",
-        "alwaysProxy": True
-    }
-
-    try:
-        logging.info(f"Requesting direct URL from cobalt-api at {COBALT_API_URL}")
-        async with aiohttp.ClientSession() as session:
-            async with session.post(COBALT_API_URL, json=payload, headers=headers) as response:
-                result = await response.json()
-
-                if result.get("status") == "error":
-                    error_details = result.get("error", {})
-                    logging.error(f"Cobalt error: {error_details}")
-                    return None, None, None
-
-                if result.get("status") in ["tunnel", "redirect"]:
-                    direct_url = result.get("url")
-                    filename = result.get("filename") or "video.mp4"
-                    # Try to get thumbnail if provided by API; otherwise None
-                    thumbnail = result.get("thumbnail") or result.get("thumb") or None
-                    # Ensure .mp4 extension for Telegram inline video
-                    if not filename.lower().endswith('.mp4'):
-                        filename = f"{filename.rsplit('.', 1)[0] if '.' in filename else filename}.mp4"
-                    return direct_url, thumbnail, filename
-
-                logging.error(f"Unexpected cobalt status for inline: {result.get('status')}")
-                return None, None, None
-    except Exception as e:
-        logging.error(f"Error getting cobalt direct url: {e}")
-        return None, None, None
-
-# Command handler for /start and /help commands
 @dp.message(Command("start", "help"))
 async def send_welcome(message: Message):
     await bot.send_message(
@@ -333,104 +346,6 @@ async def send_welcome(message: Message):
         message_thread_id=message.message_thread_id
     )
 
-# Inline mode handler: accepts a video link and returns the video without caption
-@dp.inline_query()
-async def inline_video_handler(query: InlineQuery):
-    text = (query.query or "").strip()
-
-    # If empty query, return no results (or could provide tips)
-    if not text:
-        await query.answer([], is_personal=True, cache_time=1)
-        return
-
-    # Extract URL and validate supported domains
-    url = extract_url_from_text(text) or text
-    if not any(domain in url.lower() for domain in SUPPORTED_DOMAINS):
-        await query.answer([], is_personal=True, cache_time=1)
-        return
-
-    video_url, thumb_url, filename = await get_cobalt_video_info(url)
-
-    def sanitize_http_url(raw_url: str) -> str | None:
-        if not raw_url or not isinstance(raw_url, str):
-            return None
-        raw_url = raw_url.strip().splitlines()[0]
-        if not raw_url.lower().startswith(("http://", "https://")):
-            return None
-        try:
-            # Fix common HTML-encoded ampersands
-            raw_url = raw_url.replace("&amp;", "&")
-            parts = urllib.parse.urlsplit(raw_url)
-            scheme = "https" if parts.scheme not in ("http", "https") or parts.scheme == "http" else parts.scheme
-            # IDNA-encode domain
-            try:
-                netloc = parts.netloc.encode("idna").decode("ascii")
-            except Exception:
-                netloc = parts.netloc
-            # Quote path strictly
-            safe_path = urllib.parse.quote(parts.path, safe="/:@-._~!$&'()*+,;=")
-            # Rebuild query by quoting keys/values
-            query_pairs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
-            quoted_pairs = []
-            for k, v in query_pairs:
-                kq = urllib.parse.quote(k, safe="-._~")
-                vq = urllib.parse.quote(v, safe="-._~/:@!$&'()*+,;=")
-                quoted_pairs.append(f"{kq}={vq}")
-            safe_query = "&".join(quoted_pairs)
-            # Drop fragment entirely
-            return urllib.parse.urlunsplit((scheme, netloc, safe_path, safe_query, ""))
-        except Exception:
-            return None
-
-    video_url = sanitize_http_url(video_url)
-    # Ensure thumbnail is a JPEG and valid URL (Telegram requires jpg for thumbs)
-    thumb_url = sanitize_http_url(thumb_url) if thumb_url else None
-    if not thumb_url or not thumb_url.lower().endswith((".jpg", ".jpeg")):
-        # Use a stable static JPEG without query parameters
-        thumb_url = "https://telegra.ph/file/6c0a7e38485639b61436a.jpg"
-
-    if video_url:
-        logging.info(f"Inline preparing video_url={video_url}")
-        # Create first-frame thumbnail locally and upload to telegra.ph for a stable JPEG remote URL
-        temp_dir = os.path.join("data", f"inline_{uuid.uuid4().hex}")
-        local_thumb = await create_first_frame_thumbnail_from_remote(video_url, temp_dir)
-        if local_thumb:
-            uploaded_thumb = await upload_image_to_telegra_ph(local_thumb)
-            # Cleanup local temp dir
-            try:
-                shutil.rmtree(temp_dir)
-            except Exception:
-                pass
-            if uploaded_thumb:
-                thumb_url = uploaded_thumb
-        logging.info(f"Inline sending thumb_url={thumb_url}")
-
-        result = InlineQueryResultVideo(
-            id=str(uuid.uuid4()),
-            video_url=video_url,
-            mime_type="video/mp4",
-            thumbnail_url=thumb_url,
-            title="Video",
-        )
-        try:
-            await query.answer([result], is_personal=True, cache_time=1)
-        except TelegramBadRequest as e:
-            logging.error(f"Inline answer failed: {e}")
-            error_result = InlineQueryResultArticle(
-                id=str(uuid.uuid4()),
-                title="Error",
-                description="Не удалось скачать видео",
-                input_message_content=InputTextMessageContent(message_text=MESSAGES["error_download"]) 
-            )
-            await query.answer([error_result], is_personal=True, cache_time=1)
-    else:
-        error_result = InlineQueryResultArticle(
-            id=str(uuid.uuid4()),
-            title="Ошибка",
-            description="Не удалось скачать видео",
-            input_message_content=InputTextMessageContent(message_text=MESSAGES["error_download"]) 
-        )
-        await query.answer([error_result], is_personal=True, cache_time=1)
 
 # Функция для извлечения URL из текста
 def extract_url_from_text(text):
@@ -679,71 +594,6 @@ async def create_thumbnail(video_path, video_dir, unique_suffix=None):
             return None
     except Exception as e:
         logging.error(f"Error in create_thumbnail: {e}")
-        return None
-
-# Создать превью из первого кадра удаленного видео (по URL) с помощью ffmpeg
-async def create_first_frame_thumbnail_from_remote(video_url: str, temp_dir: str):
-    try:
-        os.makedirs(temp_dir, exist_ok=True)
-        thumbnail_path = os.path.join(temp_dir, "inline_thumbnail.jpg")
-
-        cmd = [
-            "ffmpeg",
-            "-y",                # overwrite output
-            "-i", video_url,     # input is remote URL
-            "-frames:v", "1",   # only first frame
-            "-q:v", "2",        # high quality
-            "-f", "image2",
-            thumbnail_path
-        ]
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        stdout, stderr = process.communicate()
-
-        if process.returncode != 0:
-            logging.error(f"Error creating inline thumbnail: {stderr.decode()}")
-            return None
-
-        if os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
-            logging.info(f"Created inline thumbnail: {thumbnail_path}")
-            return thumbnail_path
-        else:
-            logging.error("Inline thumbnail file is empty or not created")
-            return None
-    except Exception as e:
-        logging.error(f"Error in create_first_frame_thumbnail_from_remote: {e}")
-        return None
-
-# Загрузить локальный JPEG на telegra.ph и вернуть публичный URL
-async def upload_image_to_telegra_ph(file_path: str):
-    try:
-        form = aiohttp.FormData()
-        async with aiofiles.open(file_path, 'rb') as f:
-            content = await f.read()
-        form.add_field(
-            name="file",
-            value=content,
-            filename=os.path.basename(file_path),
-            content_type="image/jpeg"
-        )
-        async with aiohttp.ClientSession() as session:
-            async with session.post("https://telegra.ph/upload", data=form) as resp:
-                if resp.status != 200:
-                    logging.error(f"Telegraph upload failed: HTTP {resp.status}")
-                    return None
-                payload = await resp.json()
-                if isinstance(payload, list) and payload and isinstance(payload[0], dict) and payload[0].get("src"):
-                    url = "https://telegra.ph" + payload[0]["src"]
-                    logging.info(f"Uploaded thumbnail to telegra.ph: {url}")
-                    return url
-                logging.error(f"Unexpected telegraph response: {payload}")
-                return None
-    except Exception as e:
-        logging.error(f"Error uploading to telegra.ph: {e}")
         return None
 
 async def main():

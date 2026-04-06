@@ -1,19 +1,25 @@
-version: '3.8'
-
 services:
-  cobalt-bot:
+  downloader:
+    build: ./downloader
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  bot:
     build: .
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
+    environment:
+      DOWNLOADER_API_URL: http://downloader:8899
     volumes:
       - ./data:/app/data
       - /root/cobalt:/root/cobalt
+    depends_on:
+      - downloader
     networks:
-      - cobalt-network
-
-
+      - app-network
 
 networks:
-  cobalt-network:
-    external: true
+  app-network:
+    driver: bridge

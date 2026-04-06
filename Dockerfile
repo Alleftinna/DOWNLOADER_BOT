@@ -30,7 +30,7 @@ COPY . .
 # Create data directory
 RUN mkdir -p data
 
-# Create cobalt directory for cookies
+# Cookies directory (cookie_generator)
 RUN mkdir -p /root/cobalt
 
 # Set environment variables
