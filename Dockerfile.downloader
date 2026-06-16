@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements-downloader.txt .
+RUN pip install --no-cache-dir -r requirements-downloader.txt
+
+COPY downloader ./downloader
+
+RUN mkdir -p /app/downloads
+
+ENV PYTHONUNBUFFERED=1
+ENV HOST=0.0.0.0
+ENV PORT=8899
+ENV DOWNLOAD_DIR=/app/downloads
+
+CMD ["python", "-m", "downloader.app"]

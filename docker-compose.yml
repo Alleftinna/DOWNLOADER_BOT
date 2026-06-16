@@ -1,19 +1,44 @@
-version: '3.8'
-
 services:
   cobalt-bot:
     build: .
     restart: always
     env_file:
-      - .env
+      - path: .env
+        required: false
+    environment:
+      COBALT_API_URL: http://cobalt-api:9000
+      DOWNLOADER_URL: http://downloader:8899
+    depends_on:
+      downloader:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
       - /root/cobalt:/root/cobalt
     networks:
+      - app-network
       - cobalt-network
 
+  downloader:
+    build:
+      context: .
+      dockerfile: Dockerfile.downloader
+    restart: always
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8899
+      DOWNLOAD_DIR: /app/downloads
+    volumes:
+      - ./downloads:/app/downloads
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8899/', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 
 networks:
+  app-network:
   cobalt-network:
     external: true
