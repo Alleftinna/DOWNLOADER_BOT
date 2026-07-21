@@ -1,8 +1,11 @@
 import json
 import logging
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+RELAY_PENDING_SECONDS = 180
 
 
 class ConnectionStore:
@@ -10,6 +13,7 @@ class ConnectionStore:
         self.path = path
         self._connection_id: str | None = None
         self._user_id: int | None = None
+        self._relay_pending_until: float = 0.0
         self.load()
 
     def load(self) -> None:
@@ -49,3 +53,9 @@ class ConnectionStore:
 
     def is_connected(self) -> bool:
         return bool(self._connection_id)
+
+    def mark_relay_pending(self) -> None:
+        self._relay_pending_until = time.monotonic() + RELAY_PENDING_SECONDS
+
+    def is_relay_pending(self) -> bool:
+        return time.monotonic() < self._relay_pending_until

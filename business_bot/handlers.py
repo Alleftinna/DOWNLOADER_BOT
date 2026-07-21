@@ -13,7 +13,7 @@ from business_bot.connection_store import ConnectionStore
 
 logger = logging.getLogger(__name__)
 
-_MEDIA_FILTER = F.video | F.document | F.animation
+_MEDIA_FILTER = F.video | F.document | F.animation | F.video_note
 
 
 def is_downloader_sender(message: Message) -> bool:
@@ -26,6 +26,12 @@ def is_downloader_sender(message: Message) -> bool:
     return False
 
 
+def has_media(message: Message) -> bool:
+    return bool(
+        message.video or message.document or message.animation or message.video_note,
+    )
+
+
 async def forward_video_to_main_bot(
     bot: Bot,
     store: ConnectionStore,
@@ -34,15 +40,26 @@ async def forward_video_to_main_bot(
 ) -> bool:
     sender_id = message.from_user.id if message.from_user else None
     sender_username = message.from_user.username if message.from_user else None
+    from_downloader = is_downloader_sender(message)
+    pending = store.is_relay_pending()
 
-    if not is_downloader_sender(message):
-        logger.debug(
-            "Skip %s video from_id=%s username=%s (expected downloader %s)",
-            source,
-            sender_id,
-            sender_username,
-            DOWNLOADER_BOT_USER_ID,
-        )
+    if not from_downloader:
+        if pending and has_media(message):
+            logger.warning(
+                "%s media during pending relay from id=%s username=%s "
+                "(expected downloader id=%s) — check DOWNLOADER_BOT_USER_ID",
+                source,
+                sender_id,
+                sender_username,
+                DOWNLOADER_BOT_USER_ID,
+            )
+        else:
+            logger.debug(
+                "Skip %s media from_id=%s username=%s",
+                source,
+                sender_id,
+                sender_username,
+            )
         return False
 
     connection_id = store.get_connection_id()
@@ -54,10 +71,11 @@ async def forward_video_to_main_bot(
         return False
 
     logger.info(
-        "Downloader video received via %s msg_id=%s chat=%s",
+        "Downloader video received via %s msg_id=%s chat=%s from=%s",
         source,
         message.message_id,
         message.chat.id,
+        sender_id,
     )
 
     try:
@@ -92,6 +110,23 @@ def register_handlers(dp: Dispatcher, bot: Bot, store: ConnectionStore) -> None:
             store.clear()
             logger.info("Business connection disabled: id=%s", connection.id)
 
+    @dp.business_message()
+    async def on_business_message_debug(message: Message) -> None:
+        if not has_media(message):
+            return
+        sender = message.from_user
+        logger.info(
+            "business_message media msg_id=%s chat=%s from_id=%s username=%s "
+            "video=%s document=%s pending=%s",
+            message.message_id,
+            message.chat.id,
+            sender.id if sender else None,
+            sender.username if sender else None,
+            bool(message.video),
+            bool(message.document),
+            store.is_relay_pending(),
+        )
+
     @dp.business_message(_MEDIA_FILTER)
     async def on_business_downloader_video(message: Message) -> None:
         if await forward_video_to_main_bot(bot, store, message, "business_message"):
@@ -109,7 +144,8 @@ def register_handlers(dp: Dispatcher, bot: Bot, store: ConnectionStore) -> None:
             "Business connection: active\n"
             f"Connection ID: {store.get_connection_id()}\n"
             f"Downloader bot user ID: {DOWNLOADER_BOT_USER_ID}\n"
-            f"Main bot user ID: {MAIN_BOT_USER_ID}"
+            f"Main bot user ID: {MAIN_BOT_USER_ID}\n"
+            f"Relay pending: {store.is_relay_pending()}"
             if connected
             else "Business connection: not connected\n"
             "Connect this bot in Telegram → Settings → Business → Chatbots"

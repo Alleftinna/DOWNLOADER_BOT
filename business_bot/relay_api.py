@@ -56,34 +56,36 @@ def create_relay_app(bot: Bot, store: ConnectionStore) -> web.Application:
             return web.json_response({"error": "url is required"}, status=400)
 
         try:
-            # Bot-to-bot direct chat: downloader replies to business bot (we receive it).
-            # Business-connection send goes as owner: downloader replies to owner chat
-            # and business bot never gets the video update.
+            # Business connection: URL appears in owner's chat with downloader (works for
+            # third-party download bots). Direct bot-to-bot is fallback only.
+            sent = None
+            send_mode = None
             try:
-                sent = await bot.send_message(chat_id=downloader_chat_id, text=url)
-                logger.info(
-                    "Relay sent url=%s via bot-to-bot chat=%s msg_id=%s",
-                    url,
-                    downloader_chat_id,
-                    sent.message_id,
-                )
-            except TelegramBadRequest as direct_exc:
-                logger.warning(
-                    "Direct bot-to-bot send failed (%s), trying business connection",
-                    direct_exc,
-                )
                 sent = await bot.send_message(
                     chat_id=downloader_chat_id,
                     text=url,
                     business_connection_id=connection_id,
                 )
-                logger.info(
-                    "Relay sent url=%s via business connection chat=%s msg_id=%s",
-                    url,
-                    downloader_chat_id,
-                    sent.message_id,
+                send_mode = "business_connection"
+            except TelegramBadRequest as business_exc:
+                logger.warning(
+                    "Business connection send failed (%s), trying direct bot-to-bot",
+                    business_exc,
                 )
-            return web.json_response({"ok": True, "message_id": sent.message_id})
+                sent = await bot.send_message(chat_id=downloader_chat_id, text=url)
+                send_mode = "bot_to_bot"
+
+            store.mark_relay_pending()
+            logger.info(
+                "Relay sent url=%s via %s chat=%s msg_id=%s",
+                url,
+                send_mode,
+                downloader_chat_id,
+                sent.message_id,
+            )
+            return web.json_response(
+                {"ok": True, "message_id": sent.message_id, "send_mode": send_mode},
+            )
         except TelegramBadRequest as exc:
             if "PEER_ID_INVALID" in str(exc):
                 logger.error("%s chat_id=%s", _PEER_ID_INVALID_HINT, downloader_chat_id)
