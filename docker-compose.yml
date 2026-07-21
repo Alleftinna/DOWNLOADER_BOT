@@ -27,8 +27,10 @@ services:
       HOST: 0.0.0.0
       PORT: 8899
       DOWNLOAD_DIR: /app/downloads
+      YTDLP_COOKIES_FILE: /app/cookies/ytdlp_cookies.txt
     volumes:
       - ./downloads:/app/downloads
+      - /root/cobalt:/app/cookies:ro
     networks:
       - app-network
     healthcheck:

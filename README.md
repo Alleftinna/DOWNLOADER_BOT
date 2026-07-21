@@ -33,6 +33,62 @@ docker compose up -d --build
 - `VIDEO_QUALITY` — целевое качество видео, по умолчанию `480`.
 - `RESTRICTED_THREADS` — список topic/thread id через запятую, которые бот игнорирует.
 
+## Cobalt недоступен / бот сразу идёт в downloader
+
+Cobalt **всегда вызывается первым**. Fallback на yt-dlp начинается только если Cobalt вернул ошибку или недоступен.
+
+Из контейнера бота `localhost:9000` — это **сам бот**, не Cobalt на хосте. Бот обращается к Cobalt по `http://cobalt-api:9000` через Docker DNS.
+
+### Подключение Cobalt к сети
+
+```bash
+docker network create cobalt-network   # если ещё не создана
+docker network connect cobalt-network cobalt-api
+```
+
+Контейнер Cobalt должен быть доступен в этой сети как **`cobalt-api`**.
+
+### Диагностика
+
+```bash
+chmod +x scripts/check_cobalt_network.sh
+./scripts/check_cobalt_network.sh bot-1 cobalt-api cobalt-network
+```
+
+При старте бот логирует:
+
+```text
+INFO: COBALT_API_URL=http://cobalt-api:9000
+INFO: Cobalt reachable: HTTP 200: ...
+```
+
+или:
+
+```text
+WARNING: Cobalt unreachable at http://cobalt-api:9000 — connection error ...
+```
+
+### Деплой актуального кода
+
+```bash
+git pull
+docker compose build --no-cache
+docker compose up -d --force-recreate
+```
+
+## Cookies для fallback (yt-dlp)
+
+Cobalt использует `/root/cobalt/cookies.json` (формат Cobalt).
+Fallback downloader использует отдельный файл Netscape-формата:
+
+```text
+/root/cobalt/ytdlp_cookies.txt
+```
+
+Экспорт cookies: [yt-dlp wiki](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies)
+
+Файл монтируется в контейнер `downloader` автоматически через volume `/root/cobalt:/app/cookies:ro`.
+
 ## Локальная разработка
 
 Если бот запускается не в Docker, а Cobalt проброшен на хост-машину:

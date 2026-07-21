@@ -10,15 +10,22 @@ from flask import Flask, jsonify, request, send_file
 
 app = Flask(__name__)
 DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", os.path.join(os.getcwd(), "downloads"))
+YTDLP_COOKIES_FILE = os.environ.get("YTDLP_COOKIES_FILE", "")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 jobs: dict[str, dict] = {}
 
 
+def build_ytdlp_cmd(base_cmd: list[str]) -> list[str]:
+    if YTDLP_COOKIES_FILE and os.path.isfile(YTDLP_COOKIES_FILE):
+        return [*base_cmd, "--cookies", YTDLP_COOKIES_FILE]
+    return base_cmd
+
+
 def run_download(job_id: str, url: str, format_choice: str, format_id: str | None) -> None:
     job = jobs[job_id]
     out_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
-    cmd = ["yt-dlp", "--no-playlist", "-o", out_template]
+    cmd = build_ytdlp_cmd(["yt-dlp", "--no-playlist", "-o", out_template])
 
     if format_choice == "audio":
         cmd += ["-x", "--audio-format", "mp3"]
@@ -84,7 +91,7 @@ def get_info():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
-    cmd = ["yt-dlp", "--no-playlist", "-j", url]
+    cmd = build_ytdlp_cmd(["yt-dlp", "--no-playlist", "-j", url])
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
@@ -174,6 +181,17 @@ def download_file(job_id: str):
 
 
 def main() -> None:
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+    if YTDLP_COOKIES_FILE and os.path.isfile(YTDLP_COOKIES_FILE):
+        logging.info("yt-dlp cookies enabled: %s", YTDLP_COOKIES_FILE)
+    else:
+        logging.warning(
+            "yt-dlp cookies file not found at %s — YouTube fallback may fail on datacenter IPs",
+            YTDLP_COOKIES_FILE or "(not configured)",
+        )
+
     port = int(os.environ.get("PORT", "8899"))
     host = os.environ.get("HOST", "127.0.0.1")
     app.run(host=host, port=port)

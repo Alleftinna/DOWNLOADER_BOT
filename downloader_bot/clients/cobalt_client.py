@@ -90,8 +90,18 @@ class CobaltClient:
 
                 logging.info("Downloaded cobalt file size: %.2fMB", bytes_to_mb(file_size))
                 return DownloadResult(local_path=local_path, filename=filename, temp_dir=video_dir, source="cobalt")
+        except aiohttp.ClientConnectorError as exc:
+            logging.error(
+                "Cobalt connection failed at %s (%s): %s. "
+                "Check that bot and cobalt-api share the same Docker network and COBALT_API_URL is correct.",
+                self.api_url,
+                type(exc).__name__,
+                exc,
+            )
+            cleanup_temp_dir(video_dir)
+            return None
         except Exception as exc:
-            logging.error("Error during cobalt download: %s", exc)
+            logging.error("Error during cobalt download at %s (%s): %s", self.api_url, type(exc).__name__, exc)
             cleanup_temp_dir(video_dir)
             return None
 
@@ -119,6 +129,14 @@ class CobaltClient:
                 filename=self._ensure_mp4(result.get("filename")),
                 source="cobalt",
             )
+        except aiohttp.ClientConnectorError as exc:
+            logging.error(
+                "Cobalt connection failed at %s (%s): %s",
+                self.api_url,
+                type(exc).__name__,
+                exc,
+            )
+            return None
         except Exception as exc:
-            logging.error("Error getting cobalt direct url: %s", exc)
+            logging.error("Error getting cobalt direct url at %s (%s): %s", self.api_url, type(exc).__name__, exc)
             return None

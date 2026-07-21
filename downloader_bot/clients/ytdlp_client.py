@@ -29,15 +29,20 @@ class YtdlpClient:
 
     async def get_info(self, url: str) -> dict | None:
         try:
+            logging.info("Fallback downloader: POST %s/api/info", self.base_url)
             async with aiohttp.ClientSession() as session:
                 async with session.post(f"{self.base_url}/api/info", json={"url": url}) as response:
                     payload = await response.json()
                     if response.status >= 400:
-                        logging.error("Downloader info error: %s", payload.get("error", payload))
+                        logging.warning(
+                            "Fallback downloader /api/info HTTP %s: %s",
+                            response.status,
+                            payload.get("error", payload),
+                        )
                         return None
                     return payload
         except Exception as exc:
-            logging.error("Error requesting downloader info: %s", exc)
+            logging.error("Fallback downloader info request failed (%s): %s", type(exc).__name__, exc)
             return None
 
     async def get_video_info(self, url: str) -> VideoInfo | None:
@@ -57,6 +62,7 @@ class YtdlpClient:
     async def download(self, url: str) -> DownloadResult | None:
         video_dir = create_video_temp_dir()
         try:
+            logging.info("Fallback downloader: starting download for %s", url)
             info = await self.get_info(url) or {}
             format_id = self._select_format_id(info)
             title = info.get("title", "")
