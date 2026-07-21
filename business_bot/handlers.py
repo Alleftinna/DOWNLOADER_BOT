@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import BusinessConnection, Message
 
+from business_bot.business_send import send_business_media_copy
 from business_bot.config import (
     DOWNLOADER_BOT_USER_ID,
     DOWNLOADER_BOT_USERNAME,
@@ -74,16 +75,17 @@ async def forward_video_to_main_bot(
     )
 
     try:
-        await bot.copy_message(
+        sent = await send_business_media_copy(
+            bot,
             chat_id=MAIN_BOT_USER_ID,
-            from_chat_id=message.chat.id,
-            message_id=message.message_id,
+            message=message,
             business_connection_id=connection_id,
         )
         logger.info(
-            "Forwarded video msg_id=%s to main bot user=%s",
+            "Forwarded video msg_id=%s to main bot user=%s as msg_id=%s",
             message.message_id,
             MAIN_BOT_USER_ID,
+            sent.message_id,
         )
         return True
     except Exception as exc:
