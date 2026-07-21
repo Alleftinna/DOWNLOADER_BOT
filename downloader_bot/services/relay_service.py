@@ -9,7 +9,7 @@ from aiogram.types import Message
 
 from downloader_bot.bot.messages import MESSAGES
 from downloader_bot.clients.business_relay_client import BusinessRelayClient
-from downloader_bot.config import RELAY_BOT_USER_ID, RELAY_GROUP_ID, RELAY_OWNER_USER_ID, RELAY_TIMEOUT_SECONDS
+from downloader_bot.config import RELAY_GROUP_ID, RELAY_OWNER_USER_ID, RELAY_TIMEOUT_SECONDS
 from downloader_bot.infrastructure.temp_files import cleanup_temp_dir
 from downloader_bot.services.download_service import DownloadService
 from downloader_bot.services.video_delivery import VideoDeliveryService
@@ -84,14 +84,6 @@ class RelayService:
         )
 
     async def handle_group_video(self, message: Message) -> bool:
-        if RELAY_BOT_USER_ID and message.from_user and message.from_user.id != RELAY_BOT_USER_ID:
-            logger.debug(
-                "Relay skip video from user %s (expected %s)",
-                message.from_user.id if message.from_user else None,
-                RELAY_BOT_USER_ID,
-            )
-            return False
-
         async with self._lock:
             if not self._queue:
                 logger.debug("Relay skip video: empty queue")
