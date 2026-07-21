@@ -3,7 +3,7 @@ import logging
 from aiohttp import web
 from aiogram import Bot
 
-from business_bot.config import RELAY_GROUP_ID
+from business_bot.config import DOWNLOADER_BOT_USER_ID
 from business_bot.connection_store import ConnectionStore
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ def create_relay_app(bot: Bot, store: ConnectionStore) -> web.Application:
             {
                 "ok": True,
                 "business_connection": connected,
-                "relay_group_id": RELAY_GROUP_ID,
+                "downloader_bot_user_id": DOWNLOADER_BOT_USER_ID,
             }
         )
 
@@ -27,6 +27,12 @@ def create_relay_app(bot: Bot, store: ConnectionStore) -> web.Application:
         if not connection_id:
             return web.json_response(
                 {"error": "no business connection — connect bot in Telegram Business settings"},
+                status=503,
+            )
+
+        if not DOWNLOADER_BOT_USER_ID:
+            return web.json_response(
+                {"error": "DOWNLOADER_BOT_USER_ID is not configured"},
                 status=503,
             )
 
@@ -41,14 +47,14 @@ def create_relay_app(bot: Bot, store: ConnectionStore) -> web.Application:
 
         try:
             sent = await bot.send_message(
-                chat_id=RELAY_GROUP_ID,
+                chat_id=DOWNLOADER_BOT_USER_ID,
                 text=url,
                 business_connection_id=connection_id,
             )
             logger.info(
-                "Relay sent url=%s to group=%s msg_id=%s",
+                "Relay sent url=%s to downloader bot user=%s msg_id=%s",
                 url,
-                RELAY_GROUP_ID,
+                DOWNLOADER_BOT_USER_ID,
                 sent.message_id,
             )
             return web.json_response({"ok": True, "message_id": sent.message_id})

@@ -9,7 +9,7 @@ from aiogram.types import Message
 
 from downloader_bot.bot.messages import MESSAGES
 from downloader_bot.clients.business_relay_client import BusinessRelayClient
-from downloader_bot.config import RELAY_GROUP_ID, RELAY_OWNER_USER_ID, RELAY_TIMEOUT_SECONDS
+from downloader_bot.config import RELAY_OWNER_USER_ID, RELAY_TIMEOUT_SECONDS
 from downloader_bot.infrastructure.temp_files import cleanup_temp_dir
 from downloader_bot.services.download_service import DownloadService
 from downloader_bot.services.video_delivery import VideoDeliveryService
@@ -83,10 +83,10 @@ class RelayService:
             len(self._queue),
         )
 
-    async def handle_group_video(self, message: Message) -> bool:
+    async def handle_owner_video(self, message: Message) -> bool:
         async with self._lock:
             if not self._queue:
-                logger.debug("Relay skip video: empty queue")
+                logger.debug("Relay skip owner video: empty queue")
                 return False
             pending = self._queue.popleft()
 
@@ -98,7 +98,7 @@ class RelayService:
         try:
             await self.bot.copy_message(
                 chat_id=pending.message.chat.id,
-                from_chat_id=RELAY_GROUP_ID,
+                from_chat_id=message.chat.id,
                 message_id=message.message_id,
                 caption=caption,
                 message_thread_id=pending.message.message_thread_id,

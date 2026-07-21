@@ -13,7 +13,6 @@ from downloader_bot.config import (
     BUSINESS_BOT_URL,
     COBALT_API_URL,
     DOWNLOADER_URL,
-    RELAY_GROUP_ID,
     RELAY_OWNER_USER_ID,
     RELAY_TIMEOUT_SECONDS,
 )
@@ -39,8 +38,7 @@ async def main():
     logging.info("COBALT_API_URL=%s", COBALT_API_URL)
     logging.info("DOWNLOADER_URL=%s", DOWNLOADER_URL)
     logging.info(
-        "Relay: group_id=%s timeout=%ss owner_id=%s business_bot=%s",
-        RELAY_GROUP_ID,
+        "Relay: timeout=%ss owner_id=%s business_bot=%s",
         RELAY_TIMEOUT_SECONDS,
         RELAY_OWNER_USER_ID,
         BUSINESS_BOT_URL,

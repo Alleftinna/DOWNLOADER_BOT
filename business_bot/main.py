@@ -4,7 +4,13 @@ import logging
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 
-from business_bot.config import BUSINESS_API_PORT, BUSINESS_BOT_TOKEN, BUSINESS_CONNECTION_FILE
+from business_bot.config import (
+    BUSINESS_API_PORT,
+    BUSINESS_BOT_TOKEN,
+    BUSINESS_CONNECTION_FILE,
+    DOWNLOADER_BOT_USER_ID,
+    MAIN_BOT_USER_ID,
+)
 from business_bot.connection_store import ConnectionStore
 from business_bot.handlers import register_handlers
 from business_bot.relay_api import create_relay_app
@@ -28,9 +34,11 @@ async def main() -> None:
     site = web.TCPSite(runner, host="0.0.0.0", port=BUSINESS_API_PORT)
     await site.start()
     logger.info(
-        "Business relay API listening on 0.0.0.0:%s (connected=%s)",
+        "Business relay API on 0.0.0.0:%s connected=%s downloader_bot=%s main_bot=%s",
         BUSINESS_API_PORT,
         store.is_connected(),
+        DOWNLOADER_BOT_USER_ID,
+        MAIN_BOT_USER_ID,
     )
 
     try:

@@ -9,7 +9,6 @@ services:
         required: false
     environment:
       BUSINESS_API_PORT: 8898
-      RELAY_GROUP_ID: -1003927121595
     volumes:
       - ./data:/app/data
     networks:
