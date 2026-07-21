@@ -20,6 +20,7 @@ from downloader_bot.infrastructure.temp_files import cleanup_temp_dir, create_vi
 from downloader_bot.media.ffmpeg import create_first_frame_thumbnail_from_remote
 from downloader_bot.media.telegraph import upload_image_to_telegra_ph
 from downloader_bot.services.download_service import DownloadService
+from downloader_bot.services.relay_service import RelayService
 from downloader_bot.services.video_delivery import VideoDeliveryService
 
 
@@ -28,6 +29,7 @@ def register_handlers(
     bot: Bot,
     download_service: DownloadService,
     delivery_service: VideoDeliveryService,
+    relay_service: RelayService,
 ) -> None:
     @dp.message(Command("start", "help"))
     async def send_welcome(message: Message) -> None:
@@ -82,7 +84,6 @@ def register_handlers(
     @dp.message(F.text)
     async def handle_text_message(message: Message) -> None:
         text = message.text or ""
-        video_dir = None
         if message.message_thread_id in RESTRICTED_THREADS:
             return
         if not is_supported_url(text):
@@ -97,24 +98,16 @@ def register_handlers(
         )
 
         try:
-            result = await download_service.download(url)
-            if result:
-                video_dir = result.temp_dir
-                caption = f"{MESSAGES['success'].format(result.filename)}\n{user_mention}\n{text}"
-                await delivery_service.handle_video_sending(
-                    message,
-                    result.local_path,
-                    caption,
-                    result.temp_dir,
-                    user_mention,
-                    text,
-                )
-                await message.delete()
-            else:
-                await delivery_service.send_message_to_chat(message, MESSAGES["error_download"])
-        finally:
+            await relay_service.submit(
+                message=message,
+                url=url,
+                user_mention=user_mention,
+                processing_message_id=processing_msg.message_id,
+            )
+        except Exception as exc:
+            logging.exception("Relay submit failed: %s", exc)
+            await delivery_service.send_message_to_chat(message, MESSAGES["error_download"])
             await processing_msg.delete()
-            cleanup_temp_dir(video_dir)
 
 
 def extract_url_from_text(text: str) -> str | None:

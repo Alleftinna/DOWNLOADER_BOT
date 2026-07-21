@@ -31,6 +31,10 @@ env/
 # Data directory
 data/
 
+# Session cookies (never commit)
+cookies.json
+ytdlp_cookies.txt
+
 # Logs
 *.log
 

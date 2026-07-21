@@ -1,0 +1,45 @@
+services:
+  proxy-bridge:
+    image: ginuerzh/gost:2.11.5
+    container_name: cobalt-proxy-bridge
+    restart: unless-stopped
+    command: -L=http://:8080 -F=socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}
+    networks:
+      - cobalt-network
+
+  cobalt-api:
+    image: ghcr.io/imputnet/cobalt:10
+    container_name: cobalt-api
+    init: true
+    read_only: true
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      API_URL: http://cobalt-api:9000
+      COOKIE_PATH: /cookies.json
+      HTTP_PROXY: http://proxy-bridge:8080
+      HTTPS_PROXY: http://proxy-bridge:8080
+      NO_PROXY: localhost,127.0.0.1,proxy-bridge
+    networks:
+      - cobalt-network
+    labels:
+      - com.centurylinklabs.watchtower.scope=cobalt
+    volumes:
+      - ./cookies.json:/cookies.json:ro
+    depends_on:
+      - proxy-bridge
+
+  watchtower:
+    image: ghcr.io/containrrr/watchtower
+    restart: unless-stopped
+    command: --cleanup --scope cobalt --interval 900 --include-restarting
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+networks:
+  cobalt-network:
+    external: true
