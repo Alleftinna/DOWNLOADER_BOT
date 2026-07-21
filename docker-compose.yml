@@ -1,4 +1,26 @@
 services:
+  business-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.business
+    restart: always
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BUSINESS_API_PORT: 8898
+      RELAY_GROUP_ID: -1003927121595
+    volumes:
+      - ./data:/app/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8898/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   cobalt-bot:
     build: .
     restart: always
@@ -8,7 +30,10 @@ services:
     environment:
       COBALT_API_URL: http://cobalt-api:9000
       DOWNLOADER_URL: http://downloader:8899
+      BUSINESS_BOT_URL: http://business-bot:8898
     depends_on:
+      business-bot:
+        condition: service_started
       downloader:
         condition: service_healthy
     volumes:

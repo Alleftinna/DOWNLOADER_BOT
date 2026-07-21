@@ -8,7 +8,8 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message
 
 from downloader_bot.bot.messages import MESSAGES
-from downloader_bot.config import RELAY_BOT_USER_ID, RELAY_GROUP_ID, RELAY_TIMEOUT_SECONDS
+from downloader_bot.clients.business_relay_client import BusinessRelayClient
+from downloader_bot.config import RELAY_BOT_USER_ID, RELAY_GROUP_ID, RELAY_OWNER_USER_ID, RELAY_TIMEOUT_SECONDS
 from downloader_bot.infrastructure.temp_files import cleanup_temp_dir
 from downloader_bot.services.download_service import DownloadService
 from downloader_bot.services.video_delivery import VideoDeliveryService
@@ -24,7 +25,6 @@ class PendingRelay:
     url: str
     user_mention: str
     processing_message_id: int
-    group_link_message_id: int
     matched: bool = field(default=False)
     fallback_task: asyncio.Task | None = field(default=None, repr=False)
 
@@ -35,10 +35,12 @@ class RelayService:
         bot: Bot,
         download_service: DownloadService,
         delivery_service: VideoDeliveryService,
+        business_client: BusinessRelayClient | None = None,
     ) -> None:
         self.bot = bot
         self.download_service = download_service
         self.delivery_service = delivery_service
+        self.business_client = business_client or BusinessRelayClient()
         self._queue: deque[PendingRelay] = deque()
         self._lock = asyncio.Lock()
 
@@ -49,23 +51,36 @@ class RelayService:
         user_mention: str,
         processing_message_id: int,
     ) -> None:
-        group_msg = await self.bot.send_message(chat_id=RELAY_GROUP_ID, text=url)
         pending = PendingRelay(
             message=message,
             url=url,
             user_mention=user_mention,
             processing_message_id=processing_message_id,
-            group_link_message_id=group_msg.message_id,
         )
+
+        if RELAY_OWNER_USER_ID:
+            try:
+                await self.bot.send_message(
+                    chat_id=RELAY_OWNER_USER_ID,
+                    text=format_owner_relay_message(url, user_mention, message.chat.id),
+                )
+            except TelegramBadRequest as exc:
+                logger.warning("Could not notify owner %s: %s", RELAY_OWNER_USER_ID, exc)
+
+        relay_ok = await self.business_client.send_url(url)
+        if not relay_ok:
+            logger.warning("Business relay failed for url=%s — immediate fallback", url)
+            await self._run_fallback(pending)
+            return
+
         async with self._lock:
             self._queue.append(pending)
         pending.fallback_task = asyncio.create_task(self._fallback_after_timeout(pending))
         logger.info(
-            "Relay enqueued url=%s chat=%s queue_size=%s group_msg=%s",
+            "Relay enqueued url=%s chat=%s queue_size=%s",
             url,
             message.chat.id,
             len(self._queue),
-            group_msg.message_id,
         )
 
     async def handle_group_video(self, message: Message) -> bool:
@@ -128,6 +143,10 @@ class RelayService:
         await self._run_fallback(pending)
 
     async def _run_fallback(self, pending: PendingRelay) -> None:
+        pending.matched = True
+        if pending.fallback_task and not pending.fallback_task.done():
+            pending.fallback_task.cancel()
+
         video_dir = None
         try:
             result = await self.download_service.download(pending.url)
@@ -173,6 +192,10 @@ class RelayService:
             )
         except TelegramBadRequest as exc:
             logger.warning("Could not delete processing message: %s", exc)
+
+
+def format_owner_relay_message(url: str, user_mention: str, chat_id: int) -> str:
+    return f"Новая ссылка\nОт: {user_mention}\nЧат: {chat_id}\n{url}"
 
 
 def build_relay_caption(user_mention: str, url: str) -> str:
