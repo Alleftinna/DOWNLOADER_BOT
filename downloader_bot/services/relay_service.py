@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 MAX_CAPTION_LENGTH = 1024
 
 
+def is_group_origin(message: Message) -> bool:
+    return message.chat.type in ("group", "supergroup")
+
+
 @dataclass
 class PendingRelay:
     message: Message
@@ -58,7 +62,7 @@ class RelayService:
             processing_message_id=processing_message_id,
         )
 
-        if RELAY_OWNER_USER_ID:
+        if RELAY_OWNER_USER_ID and not is_group_origin(message):
             try:
                 await self.bot.send_message(
                     chat_id=RELAY_OWNER_USER_ID,
@@ -109,6 +113,13 @@ class RelayService:
             return True
 
         await self._cleanup_after_success(pending)
+
+        if is_group_origin(pending.message):
+            try:
+                await message.delete()
+            except TelegramBadRequest as exc:
+                logger.warning("Could not delete relay video from owner DM: %s", exc)
+
         logger.info("Relay delivered url=%s to chat=%s", pending.url, pending.message.chat.id)
         return True
 
