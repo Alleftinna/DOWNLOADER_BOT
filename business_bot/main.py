@@ -33,13 +33,23 @@ async def main() -> None:
     await runner.setup()
     site = web.TCPSite(runner, host="0.0.0.0", port=BUSINESS_API_PORT)
     await site.start()
-    logger.info(
-        "Business relay API on 0.0.0.0:%s connected=%s downloader_bot=%s main_bot=%s",
-        BUSINESS_API_PORT,
-        store.is_connected(),
-        DOWNLOADER_BOT_USER_ID,
-        MAIN_BOT_USER_ID,
-    )
+    if store.is_connected():
+        logger.info(
+            "Business relay API on 0.0.0.0:%s connected=True connection_id=%s downloader_bot=%s main_bot=%s",
+            BUSINESS_API_PORT,
+            store.get_connection_id(),
+            DOWNLOADER_BOT_USER_ID,
+            MAIN_BOT_USER_ID,
+        )
+    else:
+        logger.error(
+            "Business relay API on 0.0.0.0:%s connected=False — reconnect business bot in "
+            "Telegram → Settings → Business → Chatbots, or set BUSINESS_CONNECTION_ID in .env. "
+            "Connection file: %s (exists=%s)",
+            BUSINESS_API_PORT,
+            BUSINESS_CONNECTION_FILE,
+            BUSINESS_CONNECTION_FILE.exists(),
+        )
 
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())

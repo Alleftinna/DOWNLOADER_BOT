@@ -22,3 +22,6 @@ BUSINESS_API_PORT = int(os.getenv("BUSINESS_API_PORT", "8898"))
 BUSINESS_CONNECTION_FILE = Path(
     os.getenv("BUSINESS_CONNECTION_FILE", "data/business_connection.json"),
 )
+# Optional fallback if data/business_connection.json was lost after container recreate.
+# Get id from business-bot logs ("Business connection enabled: id=...") or Telegram reconnect.
+BUSINESS_CONNECTION_ID = os.getenv("BUSINESS_CONNECTION_ID", "").strip()

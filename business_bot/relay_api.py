@@ -4,7 +4,7 @@ from aiohttp import web
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 
-from business_bot.config import DOWNLOADER_BOT_USER_ID, get_downloader_chat_id
+from business_bot.config import BUSINESS_CONNECTION_FILE, DOWNLOADER_BOT_USER_ID, get_downloader_chat_id
 from business_bot.connection_store import ConnectionStore
 
 logger = logging.getLogger(__name__)
@@ -21,21 +21,32 @@ def create_relay_app(bot: Bot, store: ConnectionStore) -> web.Application:
     app = web.Application()
 
     async def health(_request: web.Request) -> web.Response:
+        store.reload()
         connected = store.is_connected()
         return web.json_response(
             {
                 "ok": True,
                 "business_connection": connected,
+                "connection_id": store.get_connection_id(),
+                "connection_file": str(BUSINESS_CONNECTION_FILE),
+                "connection_file_exists": BUSINESS_CONNECTION_FILE.exists(),
                 "downloader_bot_chat_id": get_downloader_chat_id() or None,
                 "downloader_bot_user_id": DOWNLOADER_BOT_USER_ID or None,
             }
         )
 
     async def relay(request: web.Request) -> web.Response:
+        store.reload()
         connection_id = store.get_connection_id()
         if not connection_id:
             return web.json_response(
-                {"error": "no business connection — connect bot in Telegram Business settings"},
+                {
+                    "error": (
+                        "no business connection — reconnect the business bot in "
+                        "Telegram → Settings → Business → Chatbots, or set "
+                        "BUSINESS_CONNECTION_ID in .env (check /health for details)"
+                    ),
+                },
                 status=503,
             )
 
