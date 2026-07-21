@@ -86,7 +86,7 @@ class RelayService:
     async def handle_owner_video(self, message: Message) -> bool:
         async with self._lock:
             if not self._queue:
-                logger.debug("Relay skip owner video: empty queue")
+                logger.info("Relay skip owner video: empty queue msg_id=%s", message.message_id)
                 return False
             pending = self._queue.popleft()
 

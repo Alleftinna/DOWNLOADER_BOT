@@ -4,20 +4,45 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import BusinessConnection, Message
 
-from business_bot.config import DOWNLOADER_BOT_USER_ID, MAIN_BOT_USER_ID
+from business_bot.config import (
+    DOWNLOADER_BOT_USER_ID,
+    DOWNLOADER_BOT_USERNAME,
+    MAIN_BOT_USER_ID,
+)
 from business_bot.connection_store import ConnectionStore
 
 logger = logging.getLogger(__name__)
+
+_MEDIA_FILTER = F.video | F.document | F.animation
+
+
+def is_downloader_sender(message: Message) -> bool:
+    if not message.from_user:
+        return False
+    if DOWNLOADER_BOT_USER_ID and message.from_user.id == DOWNLOADER_BOT_USER_ID:
+        return True
+    if DOWNLOADER_BOT_USERNAME and message.from_user.username:
+        return message.from_user.username.lower() == DOWNLOADER_BOT_USERNAME.lower()
+    return False
 
 
 async def forward_video_to_main_bot(
     bot: Bot,
     store: ConnectionStore,
     message: Message,
+    source: str,
 ) -> bool:
-    if not message.from_user or message.from_user.id != DOWNLOADER_BOT_USER_ID:
-        return False
-    if not (message.video or message.document):
+    sender_id = message.from_user.id if message.from_user else None
+    sender_username = message.from_user.username if message.from_user else None
+
+    if not is_downloader_sender(message):
+        logger.debug(
+            "Skip %s video from_id=%s username=%s (expected downloader %s)",
+            source,
+            sender_id,
+            sender_username,
+            DOWNLOADER_BOT_USER_ID,
+        )
         return False
 
     connection_id = store.get_connection_id()
@@ -27,6 +52,13 @@ async def forward_video_to_main_bot(
     if not MAIN_BOT_USER_ID:
         logger.error("Cannot forward video: MAIN_BOT_USER_ID is not configured")
         return False
+
+    logger.info(
+        "Downloader video received via %s msg_id=%s chat=%s",
+        source,
+        message.message_id,
+        message.chat.id,
+    )
 
     try:
         await bot.copy_message(
@@ -60,14 +92,14 @@ def register_handlers(dp: Dispatcher, bot: Bot, store: ConnectionStore) -> None:
             store.clear()
             logger.info("Business connection disabled: id=%s", connection.id)
 
-    @dp.business_message(F.video | F.document)
+    @dp.business_message(_MEDIA_FILTER)
     async def on_business_downloader_video(message: Message) -> None:
-        if await forward_video_to_main_bot(bot, store, message):
+        if await forward_video_to_main_bot(bot, store, message, "business_message"):
             logger.info("Handled business_message video from downloader")
 
-    @dp.message(F.video | F.document)
+    @dp.message(_MEDIA_FILTER)
     async def on_downloader_video(message: Message) -> None:
-        if await forward_video_to_main_bot(bot, store, message):
+        if await forward_video_to_main_bot(bot, store, message, "message"):
             logger.info("Handled message video from downloader")
 
     @dp.message(Command("status"))

@@ -27,3 +27,8 @@ def register_relay_handlers(dp: Dispatcher, relay_service: RelayService) -> None
                 message.message_id,
                 message.from_user.id if message.from_user else None,
             )
+        else:
+            logger.info(
+                "Owner video ignored msg_id=%s (empty relay queue or already matched)",
+                message.message_id,
+            )
