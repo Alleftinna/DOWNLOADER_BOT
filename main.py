@@ -4,11 +4,13 @@ import logging
 from aiogram import Bot, Dispatcher
 
 from downloader_bot.bot.handlers import register_handlers
+from downloader_bot.bot.middleware import ChatAccessMiddleware
 from downloader_bot.bot.relay_handlers import register_relay_handlers
 from downloader_bot.clients.business_relay_client import BusinessRelayClient
 from downloader_bot.clients.cobalt_client import CobaltClient
 from downloader_bot.clients.ytdlp_client import YtdlpClient
 from downloader_bot.config import (
+    ALLOWED_GROUP_ID,
     BOT_TOKEN,
     BUSINESS_BOT_URL,
     COBALT_API_URL,
@@ -38,9 +40,10 @@ async def main():
     logging.info("COBALT_API_URL=%s", COBALT_API_URL)
     logging.info("DOWNLOADER_URL=%s", DOWNLOADER_URL)
     logging.info(
-        "Relay: timeout=%ss owner_id=%s business_bot=%s",
+        "Relay: timeout=%ss owner_id=%s group_id=%s business_bot=%s",
         RELAY_TIMEOUT_SECONDS,
         RELAY_OWNER_USER_ID,
+        ALLOWED_GROUP_ID,
         BUSINESS_BOT_URL,
     )
 
@@ -67,6 +70,8 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
+    dp.message.middleware(ChatAccessMiddleware())
+    dp.inline_query.middleware(ChatAccessMiddleware())
     download_service = DownloadService(CobaltClient(), YtdlpClient())
     delivery_service = VideoDeliveryService(bot)
     relay_service = RelayService(bot, download_service, delivery_service, business_client)

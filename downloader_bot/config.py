@@ -45,4 +45,6 @@ YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "")
 
 RELAY_TIMEOUT_SECONDS = int(os.getenv("RELAY_TIMEOUT_SECONDS", "120"))
 RELAY_OWNER_USER_ID = int(os.getenv("RELAY_OWNER_USER_ID", "0"))
+# Main bot responds only in this group (e.g. -1002185211541) and owner private chat.
+ALLOWED_GROUP_ID = int(os.getenv("ALLOWED_GROUP_ID", "0"))
 BUSINESS_BOT_URL = os.getenv("BUSINESS_BOT_URL", "http://business-bot:8898")
